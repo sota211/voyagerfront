@@ -10,9 +10,8 @@ export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // テロップ用
+  // テロップ & 経過時間
   const [message, setMessage] = useState("");
-  // 経過時間
   const [elapsedTime, setElapsedTime] = useState(0);
 
   const API_URL =
@@ -24,7 +23,6 @@ export default function Home() {
     const m = fname.match(/_(\d{8}_\d{6})_/);
     return m ? m[1] : null;
   }
-
   function extractTimestampPretty(url: string): string {
     const raw = extractTimestampRaw(url);
     if (!raw) return "";
@@ -37,20 +35,17 @@ export default function Home() {
     return `${y}-${mo}-${d} ${hh}:${mm}:${ss}`;
   }
 
-  // --- 経過時間をカウント ---
+  // --- 経過時間カウント ---
   useEffect(() => {
     if (!latest) return;
     const start = Date.now();
-    const id = setInterval(() => {
-      setElapsedTime(Date.now() - start);
-    }, 100);
+    const id = setInterval(() => setElapsedTime(Date.now() - start), 100);
     return () => clearInterval(id);
   }, [latest]);
 
   // --- APIポーリング ---
   useEffect(() => {
     let prevLatest: string | null = null;
-
     const fetchData = () => {
       fetch(API_URL)
         .then((res) => res.json())
@@ -61,31 +56,26 @@ export default function Home() {
               const fb = b.split("/").pop() ?? "";
               return fa < fb ? 1 : -1;
             });
-
             const newLatest = sorted[0];
 
             if (prevLatest && prevLatest !== newLatest) {
-              // 新しいスクショが来たら更新
               setLatest(newLatest);
               setOthers((prev) => [prevLatest!, ...prev]);
             } else if (!prevLatest) {
-              // 初回ロード
               setLatest(newLatest);
               setOthers(sorted.slice(1));
             }
-
             prevLatest = newLatest;
           }
         })
         .catch((err) => console.error("API fetch error:", err));
     };
-
-    fetchData(); // 初回
-    const id = setInterval(fetchData, 60_000); // 60秒ごと確認
+    fetchData();
+    const id = setInterval(fetchData, 60_000);
     return () => clearInterval(id);
   }, []);
 
-  // --- BGMミュート解除（10s後）
+  // --- BGMミュート解除（10s後） ---
   useEffect(() => {
     const id = setTimeout(() => {
       const el = document.getElementById("bgm") as HTMLAudioElement | null;
@@ -94,18 +84,17 @@ export default function Home() {
     return () => clearTimeout(id);
   }, []);
 
-  // --- 自動スクロール処理 ---
+  // --- 自動スクロール ---
   useEffect(() => {
     if (!containerRef.current || !latest) return;
     const el = containerRef.current;
-    el.scrollTop = el.scrollHeight; // 最下部から開始
+    el.scrollTop = el.scrollHeight;
 
     const duration = 10_000;
     const accelRatio = 0.3;
     const accelDuration = duration * accelRatio;
     const start = el.scrollTop;
     const distance = start;
-
     const vMax = distance / (duration * (1 - (2 / 3) * accelRatio));
     let startTime: number | null = null;
 
@@ -113,20 +102,12 @@ export default function Home() {
       if (!startTime) startTime = now;
       const elapsed = now - startTime;
 
-      // テロップ表示（0〜10000ms）
-      if (elapsed >= 1000 && elapsed < 3000) {
-        setMessage("Establishing link...");
-      } else if (elapsed >= 3000 && elapsed < 5000) {
-        setMessage("Receiving transmission...");
-      } else if (elapsed >= 5000 && elapsed < 7000) {
-        setMessage("Synchronizing mission time...");
-      } else if (elapsed >= 7000 && elapsed < 10000) {
-        setMessage("Connection established: Internet Voyager");
-      } else {
-        setMessage("");
-      }
+      if (elapsed >= 1000 && elapsed < 3000) setMessage("Establishing link...");
+      else if (elapsed >= 3000 && elapsed < 5000) setMessage("Receiving transmission...");
+      else if (elapsed >= 5000 && elapsed < 7000) setMessage("Synchronizing mission time...");
+      else if (elapsed >= 7000 && elapsed < 10000) setMessage("Connection established: Internet Voyager");
+      else setMessage("");
 
-      // スクロール距離
       let traveled = 0;
       if (elapsed <= accelDuration) {
         const t = elapsed;
@@ -135,25 +116,30 @@ export default function Home() {
         const accelDistance = (vMax * accelDuration) / 3;
         traveled = accelDistance + vMax * (elapsed - accelDuration);
       }
-
       el.scrollTop = start - traveled;
 
-      if (elapsed < duration) {
-        requestAnimationFrame(step);
-      } else {
+      if (elapsed < duration) requestAnimationFrame(step);
+      else {
         el.scrollTop = 0;
-        setMessage(""); // 終了時は消す
+        setMessage("");
       }
     }
-
     requestAnimationFrame(step);
   }, [latest]);
 
-  // --- 先読み（表示は13s以降のまま） ---
-  const latestReady = useImagePreload(latest ?? undefined);
-  useImagePreload(others[0]); // 次点も任意で先読み
+  // ====== ここから「最新1枚を絶対先に」する仕掛け ======
 
-  // --- ローディング ---
+  // A) 画像をデコードまで先読み（JS）
+  const latestReady = useImagePreload(latest ?? undefined);
+
+  // B) others の先読みは latestReady になるまで禁止（描画しない）
+  const canRenderOthers = !!latestReady;
+
+  // C) ネットワーク層でも強制的に優先：preload + fetchpriority
+  const latestHref = latest ?? undefined;
+
+  // =====================================================
+
   if (!latest) {
     return (
       <main className="bg-black text-white h-screen flex items-center justify-center">
@@ -165,10 +151,27 @@ export default function Home() {
   return (
     <main className="bg-black text-white min-h-screen flex justify-center relative">
       <Head>
-        {/* 画像CDNやGCSを使う場合の事前接続（必要に応じて調整） */}
+        {/* 先にコネクションを張る */}
         <link rel="dns-prefetch" href="https://storage.googleapis.com" />
         <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
+        {/* 最新画像をネットワークレベルで最優先プリロード */}
+        {latestHref && (
+          <link rel="preload" as="image" href={latestHref} fetchPriority="high" />
+        )}
       </Head>
+
+      {/* hidden だが「高優先」で事前取得（JSのpreloadの保険） */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {latestHref && (
+        <img
+          src={latestHref}
+          alt=""
+          style={{ display: "none" }}
+          // 最新は高優先
+          fetchPriority="high"
+          decoding="sync"
+        />
+      )}
 
       {/* BGM */}
       <audio
@@ -181,9 +184,8 @@ export default function Home() {
       />
 
       <div ref={containerRef} className="w-full h-screen overflow-y-auto">
-        {/* 最新スクショ */}
+        {/* 最新スクショを表示するセクション（13s以降に描画） */}
         <div className="flex items-center justify-center w-screen h-screen relative overflow-hidden">
-          {/* 背景映像 */}
           <video
             src="/background.mp4"
             autoPlay
@@ -192,11 +194,9 @@ export default function Home() {
             playsInline
             className="absolute inset-0 w-full h-full object-cover z-0"
           />
-
-          {/* 13,000ms以降に黒レイヤー + 最新スクショ（表示タイミングは従来通り） */}
           {elapsedTime >= 13_000 && (
             <>
-              <div className="absolute inset-0 bg-black/30 z-10"></div>
+              <div className="absolute inset-0 bg-black/30 z-10" />
               <div className="relative z-20 w-full h-full flex items-center justify-center">
                 <LatestScreenshotGrid
                   imageUrl={latest}
@@ -207,25 +207,30 @@ export default function Home() {
           )}
         </div>
 
-        {/* 過去スクショ */}
-        <div className="grid grid-cols-4">
-          {others.map((url) => (
-            <div key={url} className="relative aspect-square bg-black flex">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={url}
-                alt="screenshot"
-                className="w-full h-full object-cover object-top cursor-pointer"
-                onClick={() => setSelectedImage(url)}
-              />
-              <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
-                {extractTimestampPretty(url)}
-              </span>
-            </div>
-          ))}
-        </div>
+        {/* 過去スクショ：latestReady になるまで描画しない＆低優先＆遅延読み込み */}
+        {canRenderOthers && (
+          <div className="grid grid-cols-4">
+            {others.map((url) => (
+              <div key={url} className="relative aspect-square bg-black flex">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt="screenshot"
+                  className="w-full h-full object-cover object-top cursor-pointer"
+                  onClick={() => setSelectedImage(url)}
+                  loading="lazy"         // ← 後回し
+                  decoding="async"        // ← レイアウト優先
+                  fetchPriority="low"     // ← ネットワーク優先度も低
+                />
+                <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
+                  {extractTimestampPretty(url)}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
-        {/* 拡大表示モーダル */}
+        {/* 拡大表示モーダル（こちらも低優先） */}
         {selectedImage && (
           <div
             className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]"
@@ -236,6 +241,9 @@ export default function Home() {
               src={selectedImage}
               alt="enlarged screenshot"
               className="max-w-5xl max-h-[90vh] object-contain rounded-lg shadow-lg"
+              loading="eager"
+              decoding="async"
+              fetchPriority="low"
             />
           </div>
         )}
