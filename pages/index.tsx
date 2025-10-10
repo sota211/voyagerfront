@@ -8,7 +8,12 @@ export default function Home() {
   const [latest, setLatest] = useState<string | null>(null);
   const [others, setOthers] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
+
+  // 自動スクロールの制御
+  const hasStarted = useRef(false);         // 初回開始フラグ
+  const [canRenderOthers, setCanRenderOthers] = useState(false); // others描画許可
 
   // テロップ & 経過時間
   const [message, setMessage] = useState("");
@@ -35,7 +40,7 @@ export default function Home() {
     return `${y}-${mo}-${d} ${hh}:${mm}:${ss}`;
   }
 
-  // --- 経過時間カウント ---
+  // --- 経過時間カウント（latestが確定したら開始） ---
   useEffect(() => {
     if (!latest) return;
     const start = Date.now();
@@ -46,6 +51,7 @@ export default function Home() {
   // --- APIポーリング ---
   useEffect(() => {
     let prevLatest: string | null = null;
+
     const fetchData = () => {
       fetch(API_URL)
         .then((res) => res.json())
@@ -56,12 +62,18 @@ export default function Home() {
               const fb = b.split("/").pop() ?? "";
               return fa < fb ? 1 : -1;
             });
+
             const newLatest = sorted[0];
 
             if (prevLatest && prevLatest !== newLatest) {
+              // 新着
               setLatest(newLatest);
               setOthers((prev) => [prevLatest!, ...prev]);
+              // 新しい演出を最初からやりたい場合は以下で再演可能
+              // hasStarted.current = false;
+              // setCanRenderOthers(false);
             } else if (!prevLatest) {
+              // 初回
               setLatest(newLatest);
               setOthers(sorted.slice(1));
             }
@@ -70,6 +82,7 @@ export default function Home() {
         })
         .catch((err) => console.error("API fetch error:", err));
     };
+
     fetchData();
     const id = setInterval(fetchData, 60_000);
     return () => clearInterval(id);
@@ -84,72 +97,58 @@ export default function Home() {
     return () => clearTimeout(id);
   }, []);
 
-  // --- 自動スクロール ---
-  const hasStarted = useRef(false);
-
+  // --- 自動スクロール（最下部→上方向）。初回のみ開始。maxScrollを固定して安定化。 ---
   useEffect(() => {
     if (!containerRef.current || !latest) return;
-
-    // すでにスクロール開始済みならもうリセットしない
-    if (hasStarted.current) return;
+    if (hasStarted.current) return;     // 初回だけ開始
     hasStarted.current = true;
 
     const el = containerRef.current;
-    el.scrollTop = el.scrollHeight; // ← 初回だけ最下部にジャンプ
 
-    const duration = 10_000;
-    const accelRatio = 0.3;
-    const accelDuration = duration * accelRatio;
-    const start = el.scrollTop;
-    const distance = start;
-    const vMax = distance / (duration * (1 - (2 / 3) * accelRatio));
+    // scroll anchoring を無効化（Chrome等での“勝手な位置補正”を防ぐ）
+    el.style.overflowAnchor = "none";
+
+    // 開始時点の最大スクロール量を固定（DOMが伸びても影響させない）
+    const maxScroll = el.scrollHeight - el.clientHeight;
+    el.scrollTop = maxScroll; // 下端から開始
+
+    const duration = 10_000;  // 10秒演出
+
+    // 簡易イージング
+    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+
     let startTime: number | null = null;
 
     function step(now: number) {
       if (!startTime) startTime = now;
       const elapsed = now - startTime;
 
-      // --- テロップ処理 ---
+      // テロップ
       if (elapsed >= 1000 && elapsed < 3000) setMessage("Establishing link...");
       else if (elapsed >= 3000 && elapsed < 5000) setMessage("Receiving transmission...");
       else if (elapsed >= 5000 && elapsed < 7000) setMessage("Synchronizing mission time...");
       else if (elapsed >= 7000 && elapsed < 10000) setMessage("Connection established: Internet Voyager");
       else setMessage("");
 
-      // --- スクロール距離計算 ---
-      let traveled = 0;
-      if (elapsed <= accelDuration) {
-        const t = elapsed;
-        traveled = (vMax / (accelDuration ** 2)) * (t ** 3) / 3;
-      } else {
-        const accelDistance = (vMax * accelDuration) / 3;
-        traveled = accelDistance + vMax * (elapsed - accelDuration);
-      }
-      el.scrollTop = start - traveled;
+      const t = Math.min(1, elapsed / duration); // 0..1
+      const s = easeOutCubic(t);
+      el.scrollTop = Math.round(maxScroll * (1 - s)); // 下→上へ
 
       if (elapsed < duration) {
         requestAnimationFrame(step);
       } else {
         el.scrollTop = 0;
         setMessage("");
+        setCanRenderOthers(true);      // ← 完了後に others を解禁
       }
     }
 
-  requestAnimationFrame(step);
-}, [latest]);
+    requestAnimationFrame(step);
+  }, [latest]);
 
-  // ====== ここから「最新1枚を絶対先に」する仕掛け ======
-
-  // A) 画像をデコードまで先読み（JS）
+  // --- 最新画像の先読み（ネットワーク＆JS両方） ---
   const latestReady = useImagePreload(latest ?? undefined);
-
-  // B) others の先読みは latestReady になるまで禁止（描画しない）
-  const canRenderOthers = !!latestReady;
-
-  // C) ネットワーク層でも強制的に優先：preload + fetchpriority
   const latestHref = latest ?? undefined;
-
-  // =====================================================
 
   if (!latest) {
     return (
@@ -162,23 +161,22 @@ export default function Home() {
   return (
     <main className="bg-black text-white min-h-screen flex justify-center relative">
       <Head>
-        {/* 先にコネクションを張る */}
+        {/* 先にコネクションを張る（画像ホストに合わせて調整） */}
         <link rel="dns-prefetch" href="https://storage.googleapis.com" />
         <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
-        {/* 最新画像をネットワークレベルで最優先プリロード */}
+        {/* 最新画像はネットワーク層で最優先プリロード */}
         {latestHref && (
           <link rel="preload" as="image" href={latestHref} fetchPriority="high" />
         )}
       </Head>
 
-      {/* hidden だが「高優先」で事前取得（JSのpreloadの保険） */}
+      {/* JS側でも取得＆デコードを促進（保険） */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {latestHref && (
         <img
           src={latestHref}
           alt=""
           style={{ display: "none" }}
-          // 最新は高優先
           fetchPriority="high"
           decoding="sync"
         />
@@ -194,9 +192,14 @@ export default function Home() {
         className="hidden"
       />
 
-      <div ref={containerRef} className="w-full h-screen overflow-y-auto">
-        {/* 最新スクショを表示するセクション（13s以降に描画） */}
+      <div
+        ref={containerRef}
+        className="w-full h-screen overflow-y-auto"
+        style={{ overflowAnchor: "none" }}   // 追加: anchoring無効化
+      >
+        {/* 最新スクショの演出画面 */}
         <div className="flex items-center justify-center w-screen h-screen relative overflow-hidden">
+          {/* 背景映像 */}
           <video
             src="/background.mp4"
             autoPlay
@@ -205,6 +208,8 @@ export default function Home() {
             playsInline
             className="absolute inset-0 w-full h-full object-cover z-0"
           />
+
+          {/* 13,000ms以降に黒レイヤー + 最新スクショ */}
           {elapsedTime >= 13_000 && (
             <>
               <div className="absolute inset-0 bg-black/30 z-10" />
@@ -218,7 +223,7 @@ export default function Home() {
           )}
         </div>
 
-        {/* 過去スクショ：latestReady になるまで描画しない＆低優先＆遅延読み込み */}
+        {/* others はアニメ完了後に描画（高さが増えてもスクロール演出に影響させない） */}
         {canRenderOthers && (
           <div className="grid grid-cols-4">
             {others.map((url) => (
@@ -229,9 +234,9 @@ export default function Home() {
                   alt="screenshot"
                   className="w-full h-full object-cover object-top cursor-pointer"
                   onClick={() => setSelectedImage(url)}
-                  loading="lazy"         // ← 後回し
-                  decoding="async"        // ← レイアウト優先
-                  fetchPriority="low"     // ← ネットワーク優先度も低
+                  loading="lazy"
+                  decoding="async"
+                  fetchPriority="low"
                 />
                 <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
                   {extractTimestampPretty(url)}
@@ -241,7 +246,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* 拡大表示モーダル（こちらも低優先） */}
+        {/* 拡大表示モーダル（低優先） */}
         {selectedImage && (
           <div
             className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]"
