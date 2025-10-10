@@ -1,5 +1,8 @@
-import { useEffect, useState, useRef } from "react";
+// pages/index.tsx
+import Head from "next/head";
+import { useEffect, useRef, useState } from "react";
 import LatestScreenshotGrid from "../components/LatestScreenshotGrid";
+import { useImagePreload } from "../hooks/useImagepreload";
 
 export default function Home() {
   const [latest, setLatest] = useState<string | null>(null);
@@ -81,12 +84,13 @@ export default function Home() {
     const id = setInterval(fetchData, 60_000); // 60秒ごと確認
     return () => clearInterval(id);
   }, []);
-  
+
+  // --- BGMミュート解除（10s後）
   useEffect(() => {
     const id = setTimeout(() => {
       const el = document.getElementById("bgm") as HTMLAudioElement | null;
       if (el) el.muted = false;
-    }, 10000);
+    }, 10_000);
     return () => clearTimeout(id);
   }, []);
 
@@ -96,16 +100,13 @@ export default function Home() {
     const el = containerRef.current;
     el.scrollTop = el.scrollHeight; // 最下部から開始
 
-    const duration = 10000;
+    const duration = 10_000;
     const accelRatio = 0.3;
     const accelDuration = duration * accelRatio;
     const start = el.scrollTop;
     const distance = start;
 
-    const vMax =
-      distance /
-      (duration * (1 - (2 / 3) * accelRatio));
-
+    const vMax = distance / (duration * (1 - (2 / 3) * accelRatio));
     let startTime: number | null = null;
 
     function step(now: number) {
@@ -148,6 +149,10 @@ export default function Home() {
     requestAnimationFrame(step);
   }, [latest]);
 
+  // --- 先読み（表示は13s以降のまま） ---
+  const latestReady = useImagePreload(latest ?? undefined);
+  useImagePreload(others[0]); // 次点も任意で先読み
+
   // --- ローディング ---
   if (!latest) {
     return (
@@ -159,6 +164,12 @@ export default function Home() {
 
   return (
     <main className="bg-black text-white min-h-screen flex justify-center relative">
+      <Head>
+        {/* 画像CDNやGCSを使う場合の事前接続（必要に応じて調整） */}
+        <link rel="dns-prefetch" href="https://storage.googleapis.com" />
+        <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
+      </Head>
+
       {/* BGM */}
       <audio
         src="/background.mp3"
@@ -166,8 +177,9 @@ export default function Home() {
         loop
         muted
         id="bgm"
-        className="hidden"  // UIは見せない
+        className="hidden"
       />
+
       <div ref={containerRef} className="w-full h-screen overflow-y-auto">
         {/* 最新スクショ */}
         <div className="flex items-center justify-center w-screen h-screen relative overflow-hidden">
@@ -181,8 +193,8 @@ export default function Home() {
             className="absolute inset-0 w-full h-full object-cover z-0"
           />
 
-          {/* 13000ms以降に黒レイヤー + 最新スクショ */}
-          {elapsedTime >= 13000 && (
+          {/* 13,000ms以降に黒レイヤー + 最新スクショ（表示タイミングは従来通り） */}
+          {elapsedTime >= 13_000 && (
             <>
               <div className="absolute inset-0 bg-black/30 z-10"></div>
               <div className="relative z-20 w-full h-full flex items-center justify-center">
@@ -199,6 +211,7 @@ export default function Home() {
         <div className="grid grid-cols-4">
           {others.map((url) => (
             <div key={url} className="relative aspect-square bg-black flex">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={url}
                 alt="screenshot"
@@ -218,6 +231,7 @@ export default function Home() {
             className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]"
             onClick={() => setSelectedImage(null)}
           >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={selectedImage}
               alt="enlarged screenshot"
@@ -225,11 +239,10 @@ export default function Home() {
             />
           </div>
         )}
-
       </div>
 
       {/* テロップ（0〜10000msのみ表示） */}
-      {message && elapsedTime < 10000 && (
+      {message && elapsedTime < 10_000 && (
         <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
           <span className="text-3xl font-bold text-white bg-black/70 px-6 py-3 animate-pulse">
             {message}
