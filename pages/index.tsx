@@ -2,7 +2,7 @@
 import Head from "next/head";
 import { useEffect, useRef, useState } from "react";
 import LatestScreenshotGrid from "../components/LatestScreenshotGrid";
-import { useImagePreload } from "../hooks/useImagepreload";
+import { useImagePreload } from "../hooks/useImagePreload";
 
 export default function Home() {
   const [latest, setLatest] = useState<string | null>(null);
