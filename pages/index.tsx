@@ -1,4 +1,5 @@
 import Head from "next/head";
+import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import LatestScreenshotGrid from "../components/LatestScreenshotGrid";
 
@@ -67,7 +68,6 @@ export default function Home() {
               setLatest(newLatest);
               setOthers(sorted.slice(1));
             }
-
             prevLatest = newLatest;
           }
         })
@@ -147,41 +147,29 @@ export default function Home() {
   }, [latest]);
 
   // ==========================
-  // ★ ここが解決の本丸：最新画像の“徹底先読み”
+  // ★ latest を確実に事前取得＆デコード
   // ==========================
   const latestHref = latest ?? undefined;
 
-  // 1) JS側で Image().decode() しておく（キャッシュ＆デコードを先に終える）
-  const [latestReady, setLatestReady] = useState(false);
   useEffect(() => {
-    setLatestReady(false);
     if (!latestHref) return;
 
     let cancelled = false;
     const img = new Image();
     img.src = latestHref;
 
-    const done = () => !cancelled && setLatestReady(true);
+    const done = () => { if (!cancelled) {/* 何もしない（表示側はそのまま）*/} };
 
-    // decode() 対応ならデコード完了まで待つ
-    // 非対応ブラウザは load/error で代替
-    // @ts-ignore
-    if (typeof img.decode === "function") {
-      // @ts-ignore
-      img.decode().then(done).catch(done);
+    // decode() がある場合はデコード完了まで待ってキャッシュに載せる
+    const imgWithDecode = img as HTMLImageElement & { decode?: () => Promise<void> };
+    if (imgWithDecode.decode) {
+      imgWithDecode.decode().then(done).catch(done);
     } else {
       img.onload = done;
       img.onerror = done;
     }
-
     return () => { cancelled = true; };
   }, [latestHref]);
-
-  // 2) 下の4列は“低優先”で読み込む（帯域を奪わせない）
-  const imgPropsLow = useMemo(
-    () => ({ loading: "lazy" as const, decoding: "async" as const, fetchPriority: "low" as const }),
-    []
-  );
 
   // --- ローディング ---
   if (!latest) {
@@ -195,27 +183,12 @@ export default function Home() {
   return (
     <main className="bg-black text-white min-h-screen flex justify-center relative">
       <Head>
-        {/* 画像ホストに先にコネクションを張る（必要に応じて調整） */}
+        {/* 画像ホストに事前接続 */}
         <link rel="dns-prefetch" href="https://storage.googleapis.com" />
         <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
-        {/* ネットワークレベルでも先読み（最新だけ高優先） */}
-        {latestHref && (
-          <link rel="preload" as="image" href={latestHref} fetchPriority="high" />
-        )}
+        {/* ネットワークレベルでも最新画像を先読み（高優先） */}
+        {latestHref && <link rel="preload" as="image" href={latestHref} fetchPriority="high" />}
       </Head>
-
-      {/* hidden だが“高優先”で事前取得（JS prefetch の保険） */}
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      {latestHref && (
-        <img
-          src={latestHref}
-          alt=""
-          style={{ position: "absolute", width: 0, height: 0, opacity: 0 }}
-          fetchPriority="high"
-          decoding="sync"
-          aria-hidden
-        />
-      )}
 
       {/* BGM */}
       <audio
@@ -228,7 +201,7 @@ export default function Home() {
       />
 
       <div ref={containerRef} className="w-full h-screen overflow-y-auto">
-        {/* 最新スクショ */}
+        {/* 最新スクショ（13,000ms以降に表示） */}
         <div className="flex items-center justify-center w-screen h-screen relative overflow-hidden">
           {/* 背景映像 */}
           <video
@@ -240,12 +213,9 @@ export default function Home() {
             className="absolute inset-0 w-full h-full object-cover z-0"
           />
 
-          {/* 13,000ms以降に黒レイヤー + 最新スクショ（演出タイミングは従来通り） */}
           {elapsedTime >= 13_000 && (
             <>
-              <div className="absolute inset-0 bg-black/30 z-10"></div>
-
-              {/* latestReady を待たずに描画してOK（既に先読み済みなので即表示される） */}
+              <div className="absolute inset-0 bg-black/30 z-10" />
               <div className="relative z-20 w-full h-full flex items-center justify-center">
                 <LatestScreenshotGrid
                   imageUrl={latest}
@@ -256,17 +226,19 @@ export default function Home() {
           )}
         </div>
 
-        {/* 過去スクショ（低優先で読み込み） */}
+        {/* 過去スクショ（next/image で最適化 & 低優先） */}
         <div className="grid grid-cols-4">
           {others.map((url) => (
-            <div key={url} className="relative aspect-square bg-black flex">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+            <div key={url} className="relative aspect-square bg-black">
+              <Image
                 src={url}
                 alt="screenshot"
-                className="w-full h-full object-cover object-top cursor-pointer"
+                fill
+                sizes="25vw"
+                className="object-cover object-top cursor-pointer"
                 onClick={() => setSelectedImage(url)}
-                {...imgPropsLow}
+                loading="lazy"
+                priority={false}
               />
               <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
                 {extractTimestampPretty(url)}
@@ -275,21 +247,22 @@ export default function Home() {
           ))}
         </div>
 
-        {/* 拡大表示モーダル */}
+        {/* 拡大表示モーダル（next/image） */}
         {selectedImage && (
           <div
             className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]"
             onClick={() => setSelectedImage(null)}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={selectedImage}
-              alt="enlarged screenshot"
-              className="max-w-5xl max-h-[90vh] object-contain rounded-lg shadow-lg"
-              loading="eager"
-              decoding="async"
-              fetchPriority="low"
-            />
+            <div className="relative w-[90vw] h-[90vh]">
+              <Image
+                src={selectedImage}
+                alt="enlarged screenshot"
+                fill
+                sizes="90vw"
+                className="object-contain rounded-lg shadow-lg"
+                priority={false}
+              />
+            </div>
           </div>
         )}
       </div>
