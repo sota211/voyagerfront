@@ -1,22 +1,16 @@
-// pages/index.tsx
 import Head from "next/head";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import LatestScreenshotGrid from "../components/LatestScreenshotGrid";
-import { useImagePreload } from "../hooks/useImagePreload";
 
 export default function Home() {
   const [latest, setLatest] = useState<string | null>(null);
   const [others, setOthers] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // 自動スクロールの制御
-  const hasStarted = useRef(false);         // 初回開始フラグ
-  const [canRenderOthers, setCanRenderOthers] = useState(false); // others描画許可
-
-  // テロップ & 経過時間
+  // テロップ用
   const [message, setMessage] = useState("");
+  // 経過時間
   const [elapsedTime, setElapsedTime] = useState(0);
 
   const API_URL =
@@ -28,6 +22,7 @@ export default function Home() {
     const m = fname.match(/_(\d{8}_\d{6})_/);
     return m ? m[1] : null;
   }
+
   function extractTimestampPretty(url: string): string {
     const raw = extractTimestampRaw(url);
     if (!raw) return "";
@@ -40,7 +35,7 @@ export default function Home() {
     return `${y}-${mo}-${d} ${hh}:${mm}:${ss}`;
   }
 
-  // --- 経過時間カウント（latestが確定したら開始） ---
+  // --- 経過時間をカウント（演出タイミングは従来通り） ---
   useEffect(() => {
     if (!latest) return;
     const start = Date.now();
@@ -48,7 +43,7 @@ export default function Home() {
     return () => clearInterval(id);
   }, [latest]);
 
-  // --- APIポーリング ---
+  // --- APIポーリング（最新→others） ---
   useEffect(() => {
     let prevLatest: string | null = null;
 
@@ -66,25 +61,21 @@ export default function Home() {
             const newLatest = sorted[0];
 
             if (prevLatest && prevLatest !== newLatest) {
-              // 新着
               setLatest(newLatest);
               setOthers((prev) => [prevLatest!, ...prev]);
-              // 新しい演出を最初からやりたい場合は以下で再演可能
-              // hasStarted.current = false;
-              // setCanRenderOthers(false);
             } else if (!prevLatest) {
-              // 初回
               setLatest(newLatest);
               setOthers(sorted.slice(1));
             }
+
             prevLatest = newLatest;
           }
         })
         .catch((err) => console.error("API fetch error:", err));
     };
 
-    fetchData();
-    const id = setInterval(fetchData, 60_000);
+    fetchData(); // 初回
+    const id = setInterval(fetchData, 60_000); // 60秒ごと確認
     return () => clearInterval(id);
   }, []);
 
@@ -97,25 +88,21 @@ export default function Home() {
     return () => clearTimeout(id);
   }, []);
 
-  // --- 自動スクロール（最下部→上方向）。初回のみ開始。maxScrollを固定して安定化。 ---
+  // --- 自動スクロール処理（従来のまま） ---
   useEffect(() => {
     if (!containerRef.current || !latest) return;
-    if (hasStarted.current) return;     // 初回だけ開始
-    hasStarted.current = true;
-
     const el = containerRef.current;
+    el.scrollTop = el.scrollHeight; // 最下部から開始
 
-    // scroll anchoring を無効化（Chrome等での“勝手な位置補正”を防ぐ）
-    el.style.overflowAnchor = "none";
+    const duration = 10_000;
+    const accelRatio = 0.3;
+    const accelDuration = duration * accelRatio;
+    const start = el.scrollTop;
+    const distance = start;
 
-    // 開始時点の最大スクロール量を固定（DOMが伸びても影響させない）
-    const maxScroll = el.scrollHeight - el.clientHeight;
-    el.scrollTop = maxScroll; // 下端から開始
-
-    const duration = 10_000;  // 10秒演出
-
-    // 簡易イージング
-    const easeOutCubic = (t: number) => 1 - Math.pow(1 - t, 3);
+    const vMax =
+      distance /
+      (duration * (1 - (2 / 3) * accelRatio));
 
     let startTime: number | null = null;
 
@@ -123,33 +110,80 @@ export default function Home() {
       if (!startTime) startTime = now;
       const elapsed = now - startTime;
 
-      // テロップ
-      if (elapsed >= 1000 && elapsed < 3000) setMessage("Establishing link...");
-      else if (elapsed >= 3000 && elapsed < 5000) setMessage("Receiving transmission...");
-      else if (elapsed >= 5000 && elapsed < 7000) setMessage("Synchronizing mission time...");
-      else if (elapsed >= 7000 && elapsed < 10000) setMessage("Connection established: Internet Voyager");
-      else setMessage("");
+      // テロップ表示（0〜10000ms）
+      if (elapsed >= 1000 && elapsed < 3000) {
+        setMessage("Establishing link...");
+      } else if (elapsed >= 3000 && elapsed < 5000) {
+        setMessage("Receiving transmission...");
+      } else if (elapsed >= 5000 && elapsed < 7000) {
+        setMessage("Synchronizing mission time...");
+      } else if (elapsed >= 7000 && elapsed < 10000) {
+        setMessage("Connection established: Internet Voyager");
+      } else {
+        setMessage("");
+      }
 
-      const t = Math.min(1, elapsed / duration); // 0..1
-      const s = easeOutCubic(t);
-      el.scrollTop = Math.round(maxScroll * (1 - s)); // 下→上へ
+      // スクロール距離
+      let traveled = 0;
+      if (elapsed <= accelDuration) {
+        const t = elapsed;
+        traveled = (vMax / (accelDuration ** 2)) * (t ** 3) / 3;
+      } else {
+        const accelDistance = (vMax * accelDuration) / 3;
+        traveled = accelDistance + vMax * (elapsed - accelDuration);
+      }
+
+      el.scrollTop = start - traveled;
 
       if (elapsed < duration) {
         requestAnimationFrame(step);
       } else {
         el.scrollTop = 0;
-        setMessage("");
-        setCanRenderOthers(true);      // ← 完了後に others を解禁
+        setMessage(""); // 終了時は消す
       }
     }
 
     requestAnimationFrame(step);
   }, [latest]);
 
-  // --- 最新画像の先読み（ネットワーク＆JS両方） ---
-  const latestReady = useImagePreload(latest ?? undefined);
+  // ==========================
+  // ★ ここが解決の本丸：最新画像の“徹底先読み”
+  // ==========================
   const latestHref = latest ?? undefined;
 
+  // 1) JS側で Image().decode() しておく（キャッシュ＆デコードを先に終える）
+  const [latestReady, setLatestReady] = useState(false);
+  useEffect(() => {
+    setLatestReady(false);
+    if (!latestHref) return;
+
+    let cancelled = false;
+    const img = new Image();
+    img.src = latestHref;
+
+    const done = () => !cancelled && setLatestReady(true);
+
+    // decode() 対応ならデコード完了まで待つ
+    // 非対応ブラウザは load/error で代替
+    // @ts-ignore
+    if (typeof img.decode === "function") {
+      // @ts-ignore
+      img.decode().then(done).catch(done);
+    } else {
+      img.onload = done;
+      img.onerror = done;
+    }
+
+    return () => { cancelled = true; };
+  }, [latestHref]);
+
+  // 2) 下の4列は“低優先”で読み込む（帯域を奪わせない）
+  const imgPropsLow = useMemo(
+    () => ({ loading: "lazy" as const, decoding: "async" as const, fetchPriority: "low" as const }),
+    []
+  );
+
+  // --- ローディング ---
   if (!latest) {
     return (
       <main className="bg-black text-white h-screen flex items-center justify-center">
@@ -161,24 +195,25 @@ export default function Home() {
   return (
     <main className="bg-black text-white min-h-screen flex justify-center relative">
       <Head>
-        {/* 先にコネクションを張る（画像ホストに合わせて調整） */}
+        {/* 画像ホストに先にコネクションを張る（必要に応じて調整） */}
         <link rel="dns-prefetch" href="https://storage.googleapis.com" />
         <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
-        {/* 最新画像はネットワーク層で最優先プリロード */}
+        {/* ネットワークレベルでも先読み（最新だけ高優先） */}
         {latestHref && (
           <link rel="preload" as="image" href={latestHref} fetchPriority="high" />
         )}
       </Head>
 
-      {/* JS側でも取得＆デコードを促進（保険） */}
+      {/* hidden だが“高優先”で事前取得（JS prefetch の保険） */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       {latestHref && (
         <img
           src={latestHref}
           alt=""
-          style={{ display: "none" }}
+          style={{ position: "absolute", width: 0, height: 0, opacity: 0 }}
           fetchPriority="high"
           decoding="sync"
+          aria-hidden
         />
       )}
 
@@ -192,12 +227,8 @@ export default function Home() {
         className="hidden"
       />
 
-      <div
-        ref={containerRef}
-        className="w-full h-screen overflow-y-auto"
-        style={{ overflowAnchor: "none" }}   // 追加: anchoring無効化
-      >
-        {/* 最新スクショの演出画面 */}
+      <div ref={containerRef} className="w-full h-screen overflow-y-auto">
+        {/* 最新スクショ */}
         <div className="flex items-center justify-center w-screen h-screen relative overflow-hidden">
           {/* 背景映像 */}
           <video
@@ -209,10 +240,12 @@ export default function Home() {
             className="absolute inset-0 w-full h-full object-cover z-0"
           />
 
-          {/* 13,000ms以降に黒レイヤー + 最新スクショ */}
+          {/* 13,000ms以降に黒レイヤー + 最新スクショ（演出タイミングは従来通り） */}
           {elapsedTime >= 13_000 && (
             <>
-              <div className="absolute inset-0 bg-black/30 z-10" />
+              <div className="absolute inset-0 bg-black/30 z-10"></div>
+
+              {/* latestReady を待たずに描画してOK（既に先読み済みなので即表示される） */}
               <div className="relative z-20 w-full h-full flex items-center justify-center">
                 <LatestScreenshotGrid
                   imageUrl={latest}
@@ -223,30 +256,26 @@ export default function Home() {
           )}
         </div>
 
-        {/* others はアニメ完了後に描画（高さが増えてもスクロール演出に影響させない） */}
-        {canRenderOthers && (
-          <div className="grid grid-cols-4">
-            {others.map((url) => (
-              <div key={url} className="relative aspect-square bg-black flex">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={url}
-                  alt="screenshot"
-                  className="w-full h-full object-cover object-top cursor-pointer"
-                  onClick={() => setSelectedImage(url)}
-                  loading="lazy"
-                  decoding="async"
-                  fetchPriority="low"
-                />
-                <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
-                  {extractTimestampPretty(url)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* 過去スクショ（低優先で読み込み） */}
+        <div className="grid grid-cols-4">
+          {others.map((url) => (
+            <div key={url} className="relative aspect-square bg-black flex">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt="screenshot"
+                className="w-full h-full object-cover object-top cursor-pointer"
+                onClick={() => setSelectedImage(url)}
+                {...imgPropsLow}
+              />
+              <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
+                {extractTimestampPretty(url)}
+              </span>
+            </div>
+          ))}
+        </div>
 
-        {/* 拡大表示モーダル（低優先） */}
+        {/* 拡大表示モーダル */}
         {selectedImage && (
           <div
             className="fixed inset-0 bg-black/80 flex items-center justify-center z-[100]"
