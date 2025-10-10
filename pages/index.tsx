@@ -1,6 +1,6 @@
 import Head from "next/head";
-import Image from "next/image";
-import { useEffect, useMemo, useRef, useState } from "react";
+import NextImage from "next/image"; // ← 別名に変更
+import { useEffect, useRef, useState } from "react";
 import LatestScreenshotGrid from "../components/LatestScreenshotGrid";
 
 export default function Home() {
@@ -68,6 +68,7 @@ export default function Home() {
               setLatest(newLatest);
               setOthers(sorted.slice(1));
             }
+
             prevLatest = newLatest;
           }
         })
@@ -147,23 +148,24 @@ export default function Home() {
   }, [latest]);
 
   // ==========================
-  // ★ latest を確実に事前取得＆デコード
+  // ★ latest を確実に事前取得＆デコード（名前衝突対策済み）
   // ==========================
   const latestHref = latest ?? undefined;
 
   useEffect(() => {
     if (!latestHref) return;
+    if (typeof window === "undefined") return; // SSRガード
 
     let cancelled = false;
-    const img = new Image();
+    const img = new window.Image(); // ← グローバル Image を明示
     img.src = latestHref;
 
-    const done = () => { if (!cancelled) {/* 何もしない（表示側はそのまま）*/} };
+    const done = () => { if (!cancelled) { /* no-op */ } };
 
-    // decode() がある場合はデコード完了まで待ってキャッシュに載せる
-    const imgWithDecode = img as HTMLImageElement & { decode?: () => Promise<void> };
-    if (imgWithDecode.decode) {
-      imgWithDecode.decode().then(done).catch(done);
+    // decode() があればデコード完了まで待つ
+    const anyImg = img as HTMLImageElement & { decode?: () => Promise<void> };
+    if (typeof anyImg.decode === "function") {
+      anyImg.decode().then(done).catch(done);
     } else {
       img.onload = done;
       img.onerror = done;
@@ -183,11 +185,13 @@ export default function Home() {
   return (
     <main className="bg-black text-white min-h-screen flex justify-center relative">
       <Head>
-        {/* 画像ホストに事前接続 */}
+        {/* 画像ホストに事前接続（必要に応じて調整） */}
         <link rel="dns-prefetch" href="https://storage.googleapis.com" />
         <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
-        {/* ネットワークレベルでも最新画像を先読み（高優先） */}
-        {latestHref && <link rel="preload" as="image" href={latestHref} fetchPriority="high" />}
+        {/* 最新画像をネットワーク層で先読み（高優先） */}
+        {latestHref && (
+          <link rel="preload" as="image" href={latestHref} fetchpriority="high" />
+        )}
       </Head>
 
       {/* BGM */}
@@ -230,7 +234,7 @@ export default function Home() {
         <div className="grid grid-cols-4">
           {others.map((url) => (
             <div key={url} className="relative aspect-square bg-black">
-              <Image
+              <NextImage
                 src={url}
                 alt="screenshot"
                 fill
@@ -254,7 +258,7 @@ export default function Home() {
             onClick={() => setSelectedImage(null)}
           >
             <div className="relative w-[90vw] h-[90vh]">
-              <Image
+              <NextImage
                 src={selectedImage}
                 alt="enlarged screenshot"
                 fill
