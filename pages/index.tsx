@@ -190,7 +190,7 @@ export default function Home() {
         <link rel="preconnect" href="https://storage.googleapis.com" crossOrigin="" />
         {/* 最新画像をネットワーク層で先読み（高優先） */}
         {latestHref && (
-          <link rel="preload" as="image" href={latestHref} fetchpriority="high" />
+          <link rel="preload" as="image" href={latestHref} fetchPriority="high" />
         )}
       </Head>
 
