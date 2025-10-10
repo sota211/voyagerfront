@@ -85,10 +85,17 @@ export default function Home() {
   }, []);
 
   // --- 自動スクロール ---
+  const hasStarted = useRef(false);
+
   useEffect(() => {
     if (!containerRef.current || !latest) return;
+
+    // すでにスクロール開始済みならもうリセットしない
+    if (hasStarted.current) return;
+    hasStarted.current = true;
+
     const el = containerRef.current;
-    el.scrollTop = el.scrollHeight;
+    el.scrollTop = el.scrollHeight; // ← 初回だけ最下部にジャンプ
 
     const duration = 10_000;
     const accelRatio = 0.3;
@@ -102,12 +109,14 @@ export default function Home() {
       if (!startTime) startTime = now;
       const elapsed = now - startTime;
 
+      // --- テロップ処理 ---
       if (elapsed >= 1000 && elapsed < 3000) setMessage("Establishing link...");
       else if (elapsed >= 3000 && elapsed < 5000) setMessage("Receiving transmission...");
       else if (elapsed >= 5000 && elapsed < 7000) setMessage("Synchronizing mission time...");
       else if (elapsed >= 7000 && elapsed < 10000) setMessage("Connection established: Internet Voyager");
       else setMessage("");
 
+      // --- スクロール距離計算 ---
       let traveled = 0;
       if (elapsed <= accelDuration) {
         const t = elapsed;
@@ -118,14 +127,16 @@ export default function Home() {
       }
       el.scrollTop = start - traveled;
 
-      if (elapsed < duration) requestAnimationFrame(step);
-      else {
+      if (elapsed < duration) {
+        requestAnimationFrame(step);
+      } else {
         el.scrollTop = 0;
         setMessage("");
       }
     }
-    requestAnimationFrame(step);
-  }, [latest]);
+
+  requestAnimationFrame(step);
+}, [latest]);
 
   // ====== ここから「最新1枚を絶対先に」する仕掛け ======
 
