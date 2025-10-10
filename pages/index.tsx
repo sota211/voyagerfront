@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import LatestScreenshotGrid from "./components/LatestScreenshotGrid";
+import LatestScreenshotGrid from "../components/LatestScreenshotGrid";
 
 export default function Home() {
   const [latest, setLatest] = useState<string | null>(null);
