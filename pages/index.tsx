@@ -231,7 +231,7 @@ export default function Home() {
       {/* テロップ（0〜10000msのみ表示） */}
       {message && elapsedTime < 10000 && (
         <div className="absolute inset-0 flex items-center justify-center z-50 pointer-events-none">
-          <span className="text-3xl font-bold text-white bg-black/70 px-6 py-3 rounded-lg animate-pulse">
+          <span className="text-3xl font-bold text-white bg-black/70 px-6 py-3 animate-pulse">
             {message}
           </span>
         </div>
