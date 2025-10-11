@@ -244,7 +244,7 @@ export default function Home() {
                 loading="lazy"
                 priority={false}
               />
-              <span className="absolute bottom-1 right-1 text-lg font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
+              <span className="absolute bottom-1 right-1 text-[10px] sm:text-xs md:text-sm lg:text-base font-bold text-white leading-tight drop-shadow-[0_1px_3px_rgba(0,0,0,1)]">
                 {extractTimestampPretty(url)}
               </span>
             </div>
