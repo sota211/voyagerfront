@@ -3,6 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   images: {
     // 必要な外部ホストをここに列挙
+    unoptimized: true,
     remotePatterns: [
       // Google Cloud Storage (例: https://storage.googleapis.com/<bucket>/path/to/file.jpg)
       {
